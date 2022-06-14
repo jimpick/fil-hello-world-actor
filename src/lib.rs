@@ -95,7 +95,7 @@ pub fn invoke(params: u32) -> u32 {
     // Conduct method dispatch. Handle input parameters and return data.
     let ret: Option<RawBytes> = match sdk::message::method_number() {
         1 => constructor(),
-        2 => withdraw(params),
+        2 => post_bounty(params),
         _ => abort!(USR_UNHANDLED_MESSAGE, "unrecognized method"),
     };
 
@@ -139,30 +139,18 @@ pub fn constructor() -> Option<RawBytes> {
 }
 
 #[derive(Debug, Deserialize_tuple)]
-pub struct WithdrawalParams {
-    #[serde(with = "bigint_ser")]
-    pub amount: TokenAmount,
+pub struct PostBountyParams {
+    pub piece_cid: Cid,
+    pub address: Address,
 }
 
 /// Method num 2.
-pub fn withdraw(params: u32) -> Option<RawBytes> {
+pub fn post_bounty(params: u32) -> Option<RawBytes> {
     let params = sdk::message::params_raw(params).unwrap().1;
     let params = RawBytes::new(params);
-    let params: WithdrawalParams = params.deserialize().unwrap();
-    let caller = sdk::message::caller();
-    let address = Address::new_id(caller);
-    let send_params = RawBytes::default();
+    let params: PostBountyParams = params.deserialize().unwrap();
 
-    let _receipt = fvm_sdk::send::send(
-      &address,
-      METHOD_SEND,
-      send_params,
-      params.amount.clone()
-    ).unwrap();
-    
-    let ret = to_vec(format!("Withdraw {:?} => t0{}",
-      params, caller).as_str());
-
+    let ret = to_vec(format!("Params {:?}", &params).as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
         Err(err) => {
