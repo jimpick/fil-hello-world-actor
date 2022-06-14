@@ -29,34 +29,6 @@ macro_rules! abort {
     };
 }
 
-/// Map type to be used within actors. The underlying type is a HAMT.
-// From builtin-actors actors/runtime/src/lib.rs
-pub type Map<'bs, BS, V> = Hamt<&'bs BS, V, BytesKey>;
-
-/// Create a hamt with a custom bitwidth.
-#[inline]
-pub fn make_empty_map<BS, V>(store: &'_ BS, bitwidth: u32) -> Map<'_, BS, V>
-where
-    BS: SystemBlockstore,
-    V: DeserializeOwned + Serialize,
-{
-    Map::<_, V>::new_with_bit_width(store, bitwidth)
-}
-
-/// Create a map with a root cid.
-#[inline]
-pub fn make_map_with_root<'bs, BS, V>(
-    root: &Cid,
-    store: &'bs BS,
-) -> Result<Map<'bs, BS, V>, HamtError>
-where
-    BS: SystemBlockstore,
-    V: DeserializeOwned + Serialize,
-{
-    Map::<_, V>::load_with_bit_width(root, store, HAMT_BIT_WIDTH)
-}
-
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BountyKey {
     pub piece_cid: Cid,
@@ -154,13 +126,14 @@ pub fn constructor() -> Option<RawBytes> {
         abort!(USR_FORBIDDEN, "constructor invoked by non-init actor");
     }
 
-    let state = State::default();
-    /*
-    let bounties_cid = make_empty_map::<_, ()>(&store, HAMT_BIT_WIDTH)
-            .flush()
-            .unwrap();
+    let mut state = State::default();
+    let mut bounties : Hamt<Blockstore, BountyValue, BytesKey> = Hamt::new(Blockstore);
+
+    let bounties_cid = match bounties.flush() {
+        Ok(map) => map,
+        Err(_e) => abort!(USR_ILLEGAL_STATE, "failed to create bounties hamt"),
+    };
     state.bounties_map = bounties_cid;
-    */
     state.save();
     None
 }
