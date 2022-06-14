@@ -8,6 +8,15 @@ use fvm_ipld_encoding::{to_vec, CborStore, RawBytes, DAG_CBOR};
 use fvm_sdk as sdk;
 use fvm_sdk::message::NO_DATA_BLOCK_ID;
 use fvm_shared::ActorID;
+use serde::{Serialize, Deserialize};
+use serde::de::DeserializeOwned;
+use fvm_shared::METHOD_SEND;
+use fvm_shared::HAMT_BIT_WIDTH;
+use fvm_shared::address::Address;
+use fvm_shared::bigint::bigint_ser;
+use fvm_shared::econ::TokenAmount;
+use fvm_ipld_blockstore::Blockstore as SystemBlockstore;
+use fvm_ipld_hamt::{BytesKey, Error as HamtError, Hamt};
 
 /// A macro to abort concisely.
 /// This should be part of the SDK as it's very handy.
@@ -20,10 +29,50 @@ macro_rules! abort {
     };
 }
 
+/// Map type to be used within actors. The underlying type is a HAMT.
+// From builtin-actors actors/runtime/src/lib.rs
+pub type Map<'bs, BS, V> = Hamt<&'bs BS, V, BytesKey>;
+
+/// Create a hamt with a custom bitwidth.
+#[inline]
+pub fn make_empty_map<BS, V>(store: &'_ BS, bitwidth: u32) -> Map<'_, BS, V>
+where
+    BS: SystemBlockstore,
+    V: DeserializeOwned + Serialize,
+{
+    Map::<_, V>::new_with_bit_width(store, bitwidth)
+}
+
+/// Create a map with a root cid.
+#[inline]
+pub fn make_map_with_root<'bs, BS, V>(
+    root: &Cid,
+    store: &'bs BS,
+) -> Result<Map<'bs, BS, V>, HamtError>
+where
+    BS: SystemBlockstore,
+    V: DeserializeOwned + Serialize,
+{
+    Map::<_, V>::load_with_bit_width(root, store, HAMT_BIT_WIDTH)
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BountyKey {
+    pub piece_cid: Cid,
+    pub address: Address,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct BountyValue {
+    #[serde(with = "bigint_ser")]
+    pub amount: TokenAmount,
+}
+
 /// The state object.
 #[derive(Serialize_tuple, Deserialize_tuple, Clone, Debug, Default)]
 pub struct State {
-    pub count: u64,
+    pub bounties_map: Cid,
 }
 
 /// We should probably have a derive macro to mark an object as a state object,
@@ -70,11 +119,11 @@ impl State {
 /// Put all methods inside an impl struct and annotate it with a derive macro
 /// that handles state serde and dispatch.
 #[no_mangle]
-pub fn invoke(_: u32) -> u32 {
+pub fn invoke(params: u32) -> u32 {
     // Conduct method dispatch. Handle input parameters and return data.
     let ret: Option<RawBytes> = match sdk::message::method_number() {
         1 => constructor(),
-        2 => say_hello(),
+        2 => withdraw(params),
         _ => abort!(USR_UNHANDLED_MESSAGE, "unrecognized method"),
     };
 
@@ -88,6 +137,7 @@ pub fn invoke(_: u32) -> u32 {
         },
     }
 }
+
 
 /// The constructor populates the initial state.
 ///
@@ -105,17 +155,41 @@ pub fn constructor() -> Option<RawBytes> {
     }
 
     let state = State::default();
+    /*
+    let bounties_cid = make_empty_map::<_, ()>(&store, HAMT_BIT_WIDTH)
+            .flush()
+            .unwrap();
+    state.bounties_map = bounties_cid;
+    */
     state.save();
     None
 }
 
-/// Method num 2.
-pub fn say_hello() -> Option<RawBytes> {
-    let mut state = State::load();
-    state.count += 1;
-    state.save();
+#[derive(Debug, Deserialize_tuple)]
+pub struct WithdrawalParams {
+    #[serde(with = "bigint_ser")]
+    pub amount: TokenAmount,
+}
 
-    let ret = to_vec(format!("Hello world #{}!", &state.count).as_str());
+/// Method num 2.
+pub fn withdraw(params: u32) -> Option<RawBytes> {
+    let params = sdk::message::params_raw(params).unwrap().1;
+    let params = RawBytes::new(params);
+    let params: WithdrawalParams = params.deserialize().unwrap();
+    let caller = sdk::message::caller();
+    let address = Address::new_id(caller);
+    let send_params = RawBytes::default();
+
+    let _receipt = fvm_sdk::send::send(
+      &address,
+      METHOD_SEND,
+      send_params,
+      params.amount.clone()
+    ).unwrap();
+    
+    let ret = to_vec(format!("Withdraw {:?} => t0{}",
+      params, caller).as_str());
+
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
         Err(err) => {
