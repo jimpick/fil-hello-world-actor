@@ -3,20 +3,20 @@ mod blockstore;
 use crate::blockstore::Blockstore;
 use cid::multihash::Code;
 use cid::Cid;
+use fvm_ipld_blockstore::Blockstore as SystemBlockstore;
 use fvm_ipld_encoding::tuple::{Deserialize_tuple, Serialize_tuple};
 use fvm_ipld_encoding::{to_vec, CborStore, RawBytes, DAG_CBOR};
+use fvm_ipld_hamt::{BytesKey, Error as HamtError, Hamt};
 use fvm_sdk as sdk;
 use fvm_sdk::message::NO_DATA_BLOCK_ID;
-use fvm_shared::ActorID;
-use serde::{Serialize, Deserialize};
-use serde::de::DeserializeOwned;
-use fvm_shared::METHOD_SEND;
-use fvm_shared::HAMT_BIT_WIDTH;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::bigint_ser;
 use fvm_shared::econ::TokenAmount;
-use fvm_ipld_blockstore::Blockstore as SystemBlockstore;
-use fvm_ipld_hamt::{BytesKey, Error as HamtError, Hamt};
+use fvm_shared::ActorID;
+use fvm_shared::HAMT_BIT_WIDTH;
+use fvm_shared::METHOD_SEND;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 /// A macro to abort concisely.
 /// This should be part of the SDK as it's very handy.
@@ -110,7 +110,6 @@ pub fn invoke(params: u32) -> u32 {
     }
 }
 
-
 /// The constructor populates the initial state.
 ///
 /// Method num 1. This is part of the Filecoin calling convention.
@@ -127,8 +126,7 @@ pub fn constructor() -> Option<RawBytes> {
     }
 
     let mut state = State::default();
-    let mut bounties : Hamt<Blockstore, BountyValue, BytesKey> = Hamt::new(Blockstore);
-
+    let mut bounties: Hamt<Blockstore, BountyValue, BytesKey> = Hamt::new(Blockstore);
     let bounties_cid = match bounties.flush() {
         Ok(map) => map,
         Err(_e) => abort!(USR_ILLEGAL_STATE, "failed to create bounties hamt"),
@@ -149,8 +147,9 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     let params = sdk::message::params_raw(params).unwrap().1;
     let params = RawBytes::new(params);
     let params: PostBountyParams = params.deserialize().unwrap();
+    let value = sdk::message::value_received();
 
-    let ret = to_vec(format!("Params {:?}", &params).as_str());
+    let ret = to_vec(format!("Params {:?} Value {:?}", &params, &value).as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
         Err(err) => {
@@ -161,4 +160,10 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
             );
         }
     }
+}
+
+#[derive(Debug, Deserialize_tuple)]
+pub struct WithdrawalParams {
+    #[serde(with = "bigint_ser")]
+    pub amount: TokenAmount,
 }
