@@ -147,9 +147,22 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     let params = sdk::message::params_raw(params).unwrap().1;
     let params = RawBytes::new(params);
     let params: PostBountyParams = params.deserialize().unwrap();
-    let value = sdk::message::value_received();
+    let amount = sdk::message::value_received();
 
-    let ret = to_vec(format!("Params {:?} Value {:?}", &params, &value).as_str());
+    let key = BountyKey { piece_cid: params.piece_cid, address: params.address };
+    // println!("key1 {:?}", &key1);
+    let raw_bytes = RawBytes::serialize(&key).unwrap();
+    let bytes = raw_bytes.bytes();
+    // println!("key1 bytes {:?}", &bytes);
+    // let bounty_value = BountyValue { amount: amount };
+    let key = BytesKey::from(bytes);
+    // let key_clone = key.clone();
+    // bounties.set(key1, bounty1_value).unwrap();
+    // let retrieved1_value = bounties.get(&key1_clone);
+    // println!("Retrieved value key1 {:?}", &retrieved1_value);
+
+    let ret = to_vec(format!("Key bytes {:?}", &key).as_str());
+    // let ret = to_vec(format!("Params {:?} Value {:?}", &params, &amount).as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
         Err(err) => {
@@ -160,10 +173,4 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
             );
         }
     }
-}
-
-#[derive(Debug, Deserialize_tuple)]
-pub struct WithdrawalParams {
-    #[serde(with = "bigint_ser")]
-    pub amount: TokenAmount,
 }
