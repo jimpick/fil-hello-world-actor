@@ -3,19 +3,16 @@ mod blockstore;
 use crate::blockstore::Blockstore;
 use cid::multihash::Code;
 use cid::Cid;
-use fvm_ipld_blockstore::Blockstore as SystemBlockstore;
 use fvm_ipld_encoding::tuple::{Deserialize_tuple, Serialize_tuple};
 use fvm_ipld_encoding::{to_vec, CborStore, RawBytes, DAG_CBOR};
-use fvm_ipld_hamt::{BytesKey, Error as HamtError, Hamt};
+use fvm_ipld_hamt::{BytesKey, Hamt};
 use fvm_sdk as sdk;
 use fvm_sdk::message::NO_DATA_BLOCK_ID;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::bigint_ser;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::ActorID;
-use fvm_shared::HAMT_BIT_WIDTH;
 use fvm_shared::METHOD_SEND;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// A macro to abort concisely.
@@ -96,6 +93,7 @@ pub fn invoke(params: u32) -> u32 {
     let ret: Option<RawBytes> = match sdk::message::method_number() {
         1 => constructor(),
         2 => post_bounty(params),
+        3 => list_bounties(),
         _ => abort!(USR_UNHANDLED_MESSAGE, "unrecognized method"),
     };
 
@@ -161,31 +159,27 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
         piece_cid: params.piece_cid,
         address: params.address,
     };
-    // println!("key1 {:?}", &key1);
     let raw_bytes = RawBytes::serialize(&key).unwrap();
     let bytes = raw_bytes.bytes();
-    // println!("key1 bytes {:?}", &bytes);
     let bounty_value = BountyValue { amount: amount };
     let key = BytesKey::from(bytes);
-    // let key_clone = key.clone();
     bounties.set(key, bounty_value).unwrap();
 
     // Flush the HAMT to generate the new root CID to update the actor's state.
     let cid = match bounties.flush() {
         Ok(cid) => cid,
-        Err(err) => abort!(
-            USR_ILLEGAL_STATE,
-            "failed to flush hamt: {:?}",
-            err
-        ),
+        Err(err) => abort!(USR_ILLEGAL_STATE, "failed to flush hamt: {:?}", err),
     };
 
     // Update the actor's state.
     state.bounties_map = cid;
 
-    let ret = to_vec(format!("HAMT CID {:?}", &cid).as_str());
-    // let ret = to_vec(format!("Key bytes {:?}", &key).as_str());
-    // let ret = to_vec(format!("Params {:?} Value {:?}", &params, &amount).as_str());
+    None
+}
+
+/// Method num 3.
+pub fn list_bounties() -> Option<RawBytes> {
+    let ret = to_vec(format!("List Bounties").as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
         Err(err) => {
