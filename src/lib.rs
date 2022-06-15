@@ -149,19 +149,42 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     let params: PostBountyParams = params.deserialize().unwrap();
     let amount = sdk::message::value_received();
 
-    let key = BountyKey { piece_cid: params.piece_cid, address: params.address };
+    let mut state = State::load();
+
+    let mut bounties =
+        match Hamt::<Blockstore, BountyValue, BytesKey>::load(&state.bounties_map, Blockstore) {
+            Ok(map) => map,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to load bounties hamt: {:?}", err),
+        };
+
+    let key = BountyKey {
+        piece_cid: params.piece_cid,
+        address: params.address,
+    };
     // println!("key1 {:?}", &key1);
     let raw_bytes = RawBytes::serialize(&key).unwrap();
     let bytes = raw_bytes.bytes();
     // println!("key1 bytes {:?}", &bytes);
-    // let bounty_value = BountyValue { amount: amount };
+    let bounty_value = BountyValue { amount: amount };
     let key = BytesKey::from(bytes);
     // let key_clone = key.clone();
-    // bounties.set(key1, bounty1_value).unwrap();
-    // let retrieved1_value = bounties.get(&key1_clone);
-    // println!("Retrieved value key1 {:?}", &retrieved1_value);
+    bounties.set(key, bounty_value).unwrap();
 
-    let ret = to_vec(format!("Key bytes {:?}", &key).as_str());
+    // Flush the HAMT to generate the new root CID to update the actor's state.
+    let cid = match bounties.flush() {
+        Ok(cid) => cid,
+        Err(err) => abort!(
+            USR_ILLEGAL_STATE,
+            "failed to flush hamt: {:?}",
+            err
+        ),
+    };
+
+    // Update the actor's state.
+    state.bounties_map = cid;
+
+    let ret = to_vec(format!("HAMT CID {:?}", &cid).as_str());
+    // let ret = to_vec(format!("Key bytes {:?}", &key).as_str());
     // let ret = to_vec(format!("Params {:?} Value {:?}", &params, &amount).as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
