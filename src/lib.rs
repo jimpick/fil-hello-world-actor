@@ -173,12 +173,32 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
 
     // Update the actor's state.
     state.bounties_map = cid;
+    state.save();
 
     None
 }
 
 /// Method num 3.
 pub fn list_bounties() -> Option<RawBytes> {
+    let mut bounties_vec = Vec::new();
+
+    let state = State::load();
+    let bounties =
+        match Hamt::<Blockstore, BountyValue, BytesKey>::load(&state.bounties_map, Blockstore) {
+            Ok(map) => map,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to load bounties hamt: {:?}", err),
+        };
+    bounties
+        .for_each(|k, v: &BountyValue| {
+            let raw_bytes = RawBytes::new(k.as_slice().to_vec());
+            let key: BountyKey = raw_bytes.deserialize().unwrap();
+            bounties_vec.push(key);
+            Ok(())
+        })
+        .unwrap();
+
+    Some(RawBytes::serialize(&bounties_vec).unwrap())
+    /*
     let ret = to_vec(format!("List Bounties").as_str());
     match ret {
         Ok(ret) => Some(RawBytes::new(ret)),
@@ -190,4 +210,5 @@ pub fn list_bounties() -> Option<RawBytes> {
             );
         }
     }
+    */
 }
