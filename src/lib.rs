@@ -178,6 +178,14 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     None
 }
 
+#[derive(Debug, Serialize)]
+pub struct PostedBounty {
+    pub piece_cid: Cid,
+    pub address: Address,
+    #[serde(with = "bigint_ser")]
+    pub amount: TokenAmount,
+}
+
 /// Method num 3.
 pub fn list_bounties() -> Option<RawBytes> {
     let mut bounties_vec = Vec::new();
@@ -192,23 +200,15 @@ pub fn list_bounties() -> Option<RawBytes> {
         .for_each(|k, v: &BountyValue| {
             let raw_bytes = RawBytes::new(k.as_slice().to_vec());
             let key: BountyKey = raw_bytes.deserialize().unwrap();
-            bounties_vec.push(key);
+            let posted_bounty = PostedBounty {
+                piece_cid: key.piece_cid,
+                address: key.address,
+                amount: v.amount.clone(),
+            };
+            bounties_vec.push(posted_bounty);
             Ok(())
         })
         .unwrap();
 
     Some(RawBytes::serialize(&bounties_vec).unwrap())
-    /*
-    let ret = to_vec(format!("List Bounties").as_str());
-    match ret {
-        Ok(ret) => Some(RawBytes::new(ret)),
-        Err(err) => {
-            abort!(
-                USR_ILLEGAL_STATE,
-                "failed to serialize return value: {:?}",
-                err
-            );
-        }
-    }
-    */
 }
