@@ -145,7 +145,6 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     let params = sdk::message::params_raw(params).unwrap().1;
     let params = RawBytes::new(params);
     let params: PostBountyParams = params.deserialize().unwrap();
-    let amount = sdk::message::value_received();
 
     let mut state = State::load();
 
@@ -161,8 +160,20 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     };
     let raw_bytes = RawBytes::serialize(&key).unwrap();
     let bytes = raw_bytes.bytes();
-    let bounty_value = BountyValue { amount: amount };
     let key = BytesKey::from(bytes);
+
+    let mut amount = match bounties.get(&key) {
+        Ok(Some(bounty_value)) => bounty_value.amount.clone(),
+        Ok(None) => TokenAmount::from(0),
+        Err(err) => abort!(
+            USR_ILLEGAL_STATE,
+            "failed to query hamt when getting bounty balance: {:?}",
+            err
+        ),
+    };
+    amount += sdk::message::value_received();
+
+    let bounty_value = BountyValue { amount: amount };
     bounties.set(key, bounty_value).unwrap();
 
     // Flush the HAMT to generate the new root CID to update the actor's state.
