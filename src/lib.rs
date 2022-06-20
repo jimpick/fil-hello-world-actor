@@ -41,6 +41,7 @@ pub struct BountyValue {
 /// The state object.
 #[derive(Serialize_tuple, Deserialize_tuple, Clone, Debug, Default)]
 pub struct State {
+    pub trusted_actor_id: ActorID,
     pub bounties_map: Cid,
 }
 
@@ -94,6 +95,7 @@ pub fn invoke(params: u32) -> u32 {
         1 => constructor(),
         2 => post_bounty(params),
         3 => list_bounties(),
+        4 => lookup_bounty(params),
         _ => abort!(USR_UNHANDLED_MESSAGE, "unrecognized method"),
     };
 
@@ -129,6 +131,7 @@ pub fn constructor() -> Option<RawBytes> {
         Ok(map) => map,
         Err(_e) => abort!(USR_ILLEGAL_STATE, "failed to create bounties hamt"),
     };
+    state.trusted_actor_id = sdk::message::caller();
     state.bounties_map = bounties_cid;
     state.save();
     None
@@ -173,18 +176,20 @@ pub fn post_bounty(params: u32) -> Option<RawBytes> {
     };
     amount += sdk::message::value_received();
 
-    let bounty_value = BountyValue { amount: amount };
-    bounties.set(key, bounty_value).unwrap();
+    if amount > TokenAmount::from(0) {
+        let bounty_value = BountyValue { amount: amount };
+        bounties.set(key, bounty_value).unwrap();
 
-    // Flush the HAMT to generate the new root CID to update the actor's state.
-    let cid = match bounties.flush() {
-        Ok(cid) => cid,
-        Err(err) => abort!(USR_ILLEGAL_STATE, "failed to flush hamt: {:?}", err),
-    };
+        // Flush the HAMT to generate the new root CID to update the actor's state.
+        let cid = match bounties.flush() {
+            Ok(cid) => cid,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to flush hamt: {:?}", err),
+        };
 
-    // Update the actor's state.
-    state.bounties_map = cid;
-    state.save();
+        // Update the actor's state.
+        state.bounties_map = cid;
+        state.save();
+    }
 
     None
 }
@@ -222,4 +227,37 @@ pub fn list_bounties() -> Option<RawBytes> {
         .unwrap();
 
     Some(RawBytes::serialize(&bounties_vec).unwrap())
+}
+
+/// Method num 4.
+pub fn lookup_bounty(params: u32) -> Option<RawBytes> {
+    let params = sdk::message::params_raw(params).unwrap().1;
+    let params = RawBytes::new(params);
+    let params: PostBountyParams = params.deserialize().unwrap();
+
+    let state = State::load();
+    let bounties =
+        match Hamt::<Blockstore, BountyValue, BytesKey>::load(&state.bounties_map, Blockstore) {
+            Ok(map) => map,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to load bounties hamt: {:?}", err),
+        };
+
+    let key = BountyKey {
+        piece_cid: params.piece_cid,
+        address: params.address,
+    };
+    let raw_bytes = RawBytes::serialize(&key).unwrap();
+    let bytes = raw_bytes.bytes();
+    let key = BytesKey::from(bytes);
+    let amount = match bounties.get(&key) {
+        Ok(Some(bounty_value)) => bounty_value.amount.clone(),
+        Ok(None) => TokenAmount::from(0),
+        Err(err) => abort!(
+            USR_ILLEGAL_STATE,
+            "failed to query hamt when getting bounty balance: {:?}",
+            err
+        ),
+    };
+    let bounty_value = BountyValue { amount: amount };
+    Some(RawBytes::serialize(&bounty_value).unwrap())
 }
