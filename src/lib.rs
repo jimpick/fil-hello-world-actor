@@ -111,19 +111,13 @@ pub fn invoke(params: u32) -> u32 {
     }
 }
 
-#[derive(Debug, Deserialize_tuple)]
-pub struct ConstructorParams {
-    pub trusted_address: Address,
-}
-
 /// The constructor populates the initial state.
 ///
 /// Method num 1. This is part of the Filecoin calling convention.
 /// InitActor#Exec will call the constructor on method_num = 1.
 pub fn constructor(params: u32) -> Option<RawBytes> {
     let params = sdk::message::params_raw(params).unwrap().1;
-    let params = RawBytes::new(params);
-    let params: ConstructorParams = params.deserialize().unwrap();
+    let trusted_address = Address::from_bytes(&params).unwrap();
 
     // This constant should be part of the SDK.
     const INIT_ACTOR_ADDR: ActorID = 1;
@@ -136,7 +130,7 @@ pub fn constructor(params: u32) -> Option<RawBytes> {
     }
 
     let mut state = State {
-        trusted_address: params.trusted_address,
+        trusted_address,
         bounties_map: Cid::default(),
     };
     let mut bounties: Hamt<Blockstore, BountyValue, BytesKey> = Hamt::new(Blockstore);
@@ -144,7 +138,6 @@ pub fn constructor(params: u32) -> Option<RawBytes> {
         Ok(map) => map,
         Err(_e) => abort!(USR_ILLEGAL_STATE, "failed to create bounties hamt"),
     };
-    state.trusted_address = params.trusted_address;
     state.bounties_map = bounties_cid;
     state.save();
     None
