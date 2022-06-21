@@ -39,9 +39,9 @@ pub struct BountyValue {
 }
 
 /// The state object.
-#[derive(Serialize_tuple, Deserialize_tuple, Clone, Debug, Default)]
+#[derive(Serialize_tuple, Deserialize_tuple, Clone, Debug)]
 pub struct State {
-    pub trusted_actor_id: ActorID,
+    pub trusted_address: Address,
     pub bounties_map: Cid,
 }
 
@@ -92,10 +92,11 @@ impl State {
 pub fn invoke(params: u32) -> u32 {
     // Conduct method dispatch. Handle input parameters and return data.
     let ret: Option<RawBytes> = match sdk::message::method_number() {
-        1 => constructor(),
+        1 => constructor(params),
         2 => post_bounty(params),
         3 => list_bounties(),
         4 => lookup_bounty(params),
+        5 => award_bounty(params),
         _ => abort!(USR_UNHANDLED_MESSAGE, "unrecognized method"),
     };
 
@@ -110,11 +111,20 @@ pub fn invoke(params: u32) -> u32 {
     }
 }
 
+#[derive(Debug, Deserialize_tuple)]
+pub struct ConstructorParams {
+    pub trusted_address: Address,
+}
+
 /// The constructor populates the initial state.
 ///
 /// Method num 1. This is part of the Filecoin calling convention.
 /// InitActor#Exec will call the constructor on method_num = 1.
-pub fn constructor() -> Option<RawBytes> {
+pub fn constructor(params: u32) -> Option<RawBytes> {
+    let params = sdk::message::params_raw(params).unwrap().1;
+    let params = RawBytes::new(params);
+    let params: ConstructorParams = params.deserialize().unwrap();
+
     // This constant should be part of the SDK.
     const INIT_ACTOR_ADDR: ActorID = 1;
 
@@ -125,13 +135,16 @@ pub fn constructor() -> Option<RawBytes> {
         abort!(USR_FORBIDDEN, "constructor invoked by non-init actor");
     }
 
-    let mut state = State::default();
+    let mut state = State {
+        trusted_address: params.trusted_address,
+        bounties_map: Cid::default(),
+    };
     let mut bounties: Hamt<Blockstore, BountyValue, BytesKey> = Hamt::new(Blockstore);
     let bounties_cid = match bounties.flush() {
         Ok(map) => map,
         Err(_e) => abort!(USR_ILLEGAL_STATE, "failed to create bounties hamt"),
     };
-    state.trusted_actor_id = sdk::message::caller();
+    state.trusted_address = params.trusted_address;
     state.bounties_map = bounties_cid;
     state.save();
     None
@@ -277,10 +290,14 @@ pub fn award_bounty(params: u32) -> Option<RawBytes> {
 
     let mut state = State::load();
 
-    if state.trusted_actor_id != sdk::message::caller() {
+    let caller = sdk::message::caller();
+    let address = Address::new_id(caller);
+    if state.trusted_address != address.clone() {
         abort!(
             USR_FORBIDDEN,
-            "caller not trusted"
+            "caller not trusted {:?} != {:?} (trusted)",
+            address,
+            &state.trusted_address
         );
     }
 
@@ -310,12 +327,8 @@ pub fn award_bounty(params: u32) -> Option<RawBytes> {
 
     if amount > TokenAmount::from(0) {
         let send_params = RawBytes::default();
-        let _receipt = fvm_sdk::send::send(
-          &params.payout_address,
-          METHOD_SEND,
-          send_params,
-          amount
-        ).unwrap();
+        let _receipt =
+            fvm_sdk::send::send(&params.payout_address, METHOD_SEND, send_params, amount).unwrap();
 
         bounties.delete(&key).unwrap();
 
@@ -332,4 +345,3 @@ pub fn award_bounty(params: u32) -> Option<RawBytes> {
 
     None
 }
-
