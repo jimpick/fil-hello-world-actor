@@ -261,3 +261,75 @@ pub fn lookup_bounty(params: u32) -> Option<RawBytes> {
     let bounty_value = BountyValue { amount: amount };
     Some(RawBytes::serialize(&bounty_value).unwrap())
 }
+
+#[derive(Debug, Deserialize_tuple)]
+pub struct AwardBountyParams {
+    pub piece_cid: Cid,
+    pub address: Address,
+    pub payout_address: Address,
+}
+
+/// Method num 5.
+pub fn award_bounty(params: u32) -> Option<RawBytes> {
+    let params = sdk::message::params_raw(params).unwrap().1;
+    let params = RawBytes::new(params);
+    let params: AwardBountyParams = params.deserialize().unwrap();
+
+    let mut state = State::load();
+
+    if state.trusted_actor_id != sdk::message::caller() {
+        abort!(
+            USR_FORBIDDEN,
+            "caller not trusted"
+        );
+    }
+
+    let mut bounties =
+        match Hamt::<Blockstore, BountyValue, BytesKey>::load(&state.bounties_map, Blockstore) {
+            Ok(map) => map,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to load bounties hamt: {:?}", err),
+        };
+
+    let key = BountyKey {
+        piece_cid: params.piece_cid,
+        address: params.address,
+    };
+    let raw_bytes = RawBytes::serialize(&key).unwrap();
+    let bytes = raw_bytes.bytes();
+    let key = BytesKey::from(bytes);
+
+    let amount = match bounties.get(&key) {
+        Ok(Some(bounty_value)) => bounty_value.amount.clone(),
+        Ok(None) => TokenAmount::from(0),
+        Err(err) => abort!(
+            USR_ILLEGAL_STATE,
+            "failed to query hamt when getting bounty balance: {:?}",
+            err
+        ),
+    };
+
+    if amount > TokenAmount::from(0) {
+        let send_params = RawBytes::default();
+        let _receipt = fvm_sdk::send::send(
+          &params.payout_address,
+          METHOD_SEND,
+          send_params,
+          amount
+        ).unwrap();
+
+        bounties.delete(&key).unwrap();
+
+        // Flush the HAMT to generate the new root CID to update the actor's state.
+        let cid = match bounties.flush() {
+            Ok(cid) => cid,
+            Err(err) => abort!(USR_ILLEGAL_STATE, "failed to flush hamt: {:?}", err),
+        };
+
+        // Update the actor's state.
+        state.bounties_map = cid;
+        state.save();
+    }
+
+    None
+}
+
